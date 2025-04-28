@@ -2,8 +2,8 @@ import gymnasium as gym
 import cv2
 import numpy as np
 import time
-from scipy.interpolate import splprep, splev
-
+from scipy.interpolate import interp1d
+import controller
 class CarRacer:
     def __init__(self, render_mode="human"):
 
@@ -16,8 +16,9 @@ class CarRacer:
     
     def step(self, action):
 
+        
+        
         self.observation, reward, terminated, truncated, _ = self.env.step(action)
-        self.extract_features()
         if terminated or truncated:
             print("Episode finished. Resetting environment.")
             self.reset_env()
@@ -34,33 +35,35 @@ class CarRacer:
         contours,_ = cv2.findContours(mask_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         contour_img = image.copy()
-        print(len(contours))
-        cv2.drawContours(contour_img, contours, -1, (0,255,0), 3)
-        cv2.imshow("Contours", contour_img)
+        
+        largest = max(contours, key=cv2.contourArea)
         cx, cy = self.getCarLocation(image)
+        car = []
+        closest_point = []
         if cx !=-1 and cy !=-1 and contours:
-            if len(contours) > 1:
-                # Flatten and concatenate all contour points into one array
-                lane_points = np.vstack([contour.reshape(-1, 2) for contour in contours])
-            else:
-                lane_points = contours[0].reshape(-1, 2)
-
-            # Sort points by Y-coordinate
-            lane_points = lane_points[np.argsort(lane_points[:, 1])]
-            #xs = (np.convolve(lane_points[:,0], np.ones(5)/5, mode='valid'))
-            #ys = (np.convolve(lane_points[:,1], np.ones(5)/5, mode='valid'))
             
-            for x,y in lane_points:
-                cv2.circle(image, (int(x),int(y)), radius=5, color=(0,0,255), thickness=3)
-            #cv2.circle(image, (x,y), radius=5, color=(0,0,255), thickness=3)
-            cv2.imshow('Lane', image)
-            '''centerline_points = np.column_stack((spline[0],spline[1])).astype(np.int32)
-                       
-            for i in range(len(centerline_points) - 1):
-                cv2.line(image, tuple(centerline_points[i]), tuple(centerline_points[i + 1]), (0, 0, 255), 2)
-            cv2.imshow('Lane Centerline', image)'''
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            return
+            lane_points = largest.squeeze()
+            diffs = np.diff(lane_points, axis = 0)
+            dists = np.hypot(diffs[:,0], diffs[:,1])
+            arc_lengths = np.insert(np.cumsum(dists),0,0)
+            fx = interp1d(arc_lengths, lane_points[:,0])
+            fy = interp1d(arc_lengths, lane_points[:,1])
+            num_samples = 50
+            uniform_dists = np.linspace(0, arc_lengths[-1], num_samples)
+            sampled = np.vstack((fx(uniform_dists), fy(uniform_dists))).T
+            mid = len(sampled) // 2
+            left_side = sampled[:mid]
+            right_side = sampled[mid:][::-1]
+            centerline = (left_side + right_side) / 2.0
+            centerline = centerline[:16]
+            car = np.array([cx,cy])
+            distances = np.linalg.norm(centerline - car, axis=1)
+            closest = np.argmin(distances)
+            closest_point = centerline[closest]
+        raw_env = self.env.unwrapped
+        angle = raw_env.car.hull.angle
+        print(angle)
+        return car, closest_point
 
     def getCarLocation(self, image):
         #image = cv2.resize(image, (96*3,96*3))
@@ -104,12 +107,15 @@ class CarRacer:
         #cv2.circle(image,(cx,cy),5,(0,0,255),-1)
         #cv2.imshow("Location of Car", image)
         return cx,cy
-    
+    def get_actuation(self, car, next_point):
+        heading = np.arctan2((next_point[1]-car[1])/(next_point[0]-car[0]))
+
     def random_play(self, steps=1000):
         self.reset_env()
         #time.sleep(3)
         for _ in range(steps):
-            action = self.env.action_space.sample()
+            car, next_point = self.extract_features()
+            action = (car, next_point)
             self.step(action)
         self.close()
     def close(self):
