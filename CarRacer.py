@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import time
 from scipy.interpolate import interp1d
-import controller
+from controller import Controller
 class CarRacer:
     def __init__(self, render_mode="human"):
 
@@ -15,9 +15,6 @@ class CarRacer:
         return self.observation
     
     def step(self, action):
-
-        
-        
         self.observation, reward, terminated, truncated, _ = self.env.step(action)
         if terminated or truncated:
             print("Episode finished. Resetting environment.")
@@ -39,7 +36,8 @@ class CarRacer:
         largest = max(contours, key=cv2.contourArea)
         cx, cy = self.getCarLocation(image)
         car = []
-        closest_point = []
+        closest_point = np.array([])
+        car = np.array([cx,cy])
         if cx !=-1 and cy !=-1 and contours:
             
             lane_points = largest.squeeze()
@@ -56,14 +54,12 @@ class CarRacer:
             right_side = sampled[mid:][::-1]
             centerline = (left_side + right_side) / 2.0
             centerline = centerline[:16]
-            car = np.array([cx,cy])
             distances = np.linalg.norm(centerline - car, axis=1)
             closest = np.argmin(distances)
-            closest_point = centerline[closest]
+            closest_point = np.array(centerline[closest])
         raw_env = self.env.unwrapped
         angle = raw_env.car.hull.angle
-        print(angle)
-        return car, closest_point
+        return car, closest_point, angle
 
     def getCarLocation(self, image):
         #image = cv2.resize(image, (96*3,96*3))
@@ -107,15 +103,25 @@ class CarRacer:
         #cv2.circle(image,(cx,cy),5,(0,0,255),-1)
         #cv2.imshow("Location of Car", image)
         return cx,cy
-    def get_actuation(self, car, next_point):
-        heading = np.arctan2((next_point[1]-car[1])/(next_point[0]-car[0]))
-
+    def get_actuation(self, car, next_point, yaw):
+        c = Controller("Pure Pursuit", "PID")
+        
+        if next_point is not None and next_point.shape == (2,) and car[0]!=-1 and car[1]!=-1:
+            steering_angle = c.getSteeringAngle(car, next_point, yaw)
+            throttle = 0.01
+            brake = 0
+        else:
+            steering_angle = 0
+            throttle = 0
+            brake = 0
+        return steering_angle, throttle, brake
     def random_play(self, steps=1000):
         self.reset_env()
         #time.sleep(3)
         for _ in range(steps):
-            car, next_point = self.extract_features()
-            action = (car, next_point)
+            car, next_point, yaw = self.extract_features()
+            steering, throttle, brake = self.get_actuation(car, next_point, yaw)
+            action = np.array([steering, throttle, brake])
             self.step(action)
         self.close()
     def close(self):
