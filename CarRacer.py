@@ -57,6 +57,10 @@ class CarRacer:
             distances = np.linalg.norm(centerline - car, axis=1)
             closest = np.argmin(distances)
             closest_point = np.array(centerline[closest])
+            
+            cv2.circle(contour_img, (int(closest_point[0]),int(closest_point[1])), 4, (255,0,0), -1)
+            cv2.imshow("Next Point ", contour_img)
+            cv2.waitKey(1)
         raw_env = self.env.unwrapped
         angle = raw_env.car.hull.angle
         return car, closest_point, angle
@@ -100,8 +104,8 @@ class CarRacer:
             cx = -1
             cy = -1
         
-        #cv2.circle(image,(cx,cy),5,(0,0,255),-1)
-        #cv2.imshow("Location of Car", image)
+        cv2.imshow("Location of Car", image)
+        cv2.waitKey(1)
         return cx,cy
     def get_actuation(self, car, next_point, yaw):
         c = Controller("Pure Pursuit", "PID")
@@ -130,4 +134,4 @@ class CarRacer:
 
 if __name__=="__main__":
     agent = CarRacer()
-    agent.random_play(steps=5000)
+    agent.random_play(steps=50000)
