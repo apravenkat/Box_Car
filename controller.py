@@ -21,4 +21,7 @@ class Controller:
         max_steering_angle = 0.4  # radians
         steering_action = np.clip(delta / max_steering_angle, -1.0, 1.0)
         return steering_action
+    def getThrottleBrake(self, car, next_point, yaw):
+
+        return 0.01, 0
     

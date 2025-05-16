@@ -112,8 +112,7 @@ class CarRacer:
         
         if next_point is not None and next_point.shape == (2,) and car[0]!=-1 and car[1]!=-1:
             steering_angle = c.getSteeringAngle(car, next_point, yaw)
-            throttle = 0.01
-            brake = 0
+            throttle, brake = c.getThrottleBrake(car, next_point, yaw) 
         else:
             steering_angle = 0
             throttle = 0
