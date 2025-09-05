@@ -26,45 +26,81 @@ class CarRacer:
         image = cv2.resize(image, (96*3,96*3))
         lower_green = np.array([35, 40,40])
         upper_green = np.array([85,255,255])
-        mask = cv2.inRange(image, lower_green, upper_green)
-        mask_inv = cv2.bitwise_not(mask)
-        mask_inv = cv2.resize(mask_inv,(96*3,96*3))
-        contours,_ = cv2.findContours(mask_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        contour_img = image.copy()
+        #mask_inv = cv2.resize(mask_inv,(96*3,96*3))
+        #contours,_ = cv2.findContours(mask_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        largest = max(contours, key=cv2.contourArea)
+        #contour_img = image.copy()
+        
+        #largest = max(contours, key=cv2.contourArea)
         cx, cy = self.getCarLocation(image)
         car = []
         closest_point = np.array([])
         car = np.array([cx,cy])
-        if cx !=-1 and cy !=-1 and contours:
+        max_curvature = None
+        if cx !=-1 and cy !=-1:
+            look_ahead = 80   # how far ahead to look (pixels)
+            band_height = 40   # vertical size of the cropped region
+            band_width = 150  # horizontal size of the cropped region
+            y1 = max(0, cy - look_ahead - band_height)
+            y2 = max(0, cy - look_ahead)
+            x1 = max(0, cx - band_width // 2)
+            x2 = min(image.shape[1], cx + band_width // 2)
+            cropped = image[y1:y2, x1:x2]
             
-            lane_points = largest.squeeze()
-            diffs = np.diff(lane_points, axis = 0)
-            dists = np.hypot(diffs[:,0], diffs[:,1])
-            arc_lengths = np.insert(np.cumsum(dists),0,0)
-            fx = interp1d(arc_lengths, lane_points[:,0])
-            fy = interp1d(arc_lengths, lane_points[:,1])
-            num_samples = 50
-            uniform_dists = np.linspace(0, arc_lengths[-1], num_samples)
-            sampled = np.vstack((fx(uniform_dists), fy(uniform_dists))).T
-            mid = len(sampled) // 2
-            left_side = sampled[:mid]
-            right_side = sampled[mid:][::-1]
-            centerline = (left_side + right_side) / 2.0
-            centerline = centerline[:16]
-            distances = np.linalg.norm(centerline - car, axis=1)
-            closest = np.argmin(distances)
-            closest_point = np.array(centerline[closest])
-            
-            cv2.circle(contour_img, (int(closest_point[0]),int(closest_point[1])), 4, (255,0,0), -1)
-            cv2.imshow("Next Point ", contour_img)
-            cv2.waitKey(1)
-        raw_env = self.env.unwrapped
-        angle = raw_env.car.hull.angle
-        return car, closest_point, angle
+            mask = cv2.inRange(cropped, lower_green, upper_green)
+            mask_inv = cv2.bitwise_not(mask)
+            contours, _ = cv2.findContours(mask_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                largest = max(contours, key=cv2.contourArea)
+                largest = largest + np.array([x1, y1])
+                lane_points = largest.squeeze()
+                diffs = np.diff(lane_points, axis = 0)
+                dists = np.hypot(diffs[:,0], diffs[:,1])
+                arc_lengths = np.insert(np.cumsum(dists),0,0)
+                fx = interp1d(arc_lengths, lane_points[:,0])
+                fy = interp1d(arc_lengths, lane_points[:,1])
+                num_samples = 50
+                uniform_dists = np.linspace(0, arc_lengths[-1], num_samples)
+                sampled = np.vstack((fx(uniform_dists), fy(uniform_dists))).T
+                mid = len(sampled) // 2
+                left_side = sampled[:mid]
+                right_side = sampled[mid:][::-1]
+                centerline = (left_side + right_side) / 2.0
+                #centerline = centerline[:]
+                curvature = self.findCurvature(centerline)
+                max_curvature = np.max(curvature)
+                distances = np.linalg.norm(centerline - car, axis=1)
+                closest = np.argmin(distances)
+                closest_point = np.array(centerline[closest])
+                contour_img = image.copy()
+                for i in range(1, len(centerline)):
+                    pt1 = (int(centerline[i-1][0]), int(centerline[i-1][1]))
+                    pt2 = (int(centerline[i][0]), int(centerline[i][1]))
+                    cv2.line(contour_img, pt1, pt2, (0, 255, 0), 2)
 
+                cv2.circle(contour_img, (int(closest_point[0]),int(closest_point[1])), 4, (255,0,0), -1)
+                contour_img = cv2.resize(contour_img, (96*3, 96*3))
+                cv2.imshow("Next Point ", contour_img)
+                cv2.waitKey(1)
+        raw_env = self.env.unwrapped
+        linear_velocity = raw_env.car.hull.linearVelocity
+        angle = raw_env.car.hull.angle
+        speed = np.sqrt(linear_velocity[0]**2 + linear_velocity[1]**2)
+        return car, closest_point, angle, max_curvature, speed
+    def findCurvature(self, points):
+        if len(points) < 3:
+            return 0.0
+        x = points[:, 0]
+        y = points[:, 1]
+        dx = np.gradient(x)
+        dy = np.gradient(y)
+        ddx = np.gradient(dx)
+        ddy = np.gradient(dy)
+        epsilon = 1e-6
+        curvature = np.abs(dx * ddy - dy * ddx) / ((dx**2 + dy**2)**1.5 + epsilon)
+        curvature = np.nan_to_num(curvature)
+        return curvature
     def getCarLocation(self, image):
         #image = cv2.resize(image, (96*3,96*3))
         # Define the lower and upper bounds for red color in RGB
@@ -107,23 +143,24 @@ class CarRacer:
         cv2.imshow("Location of Car", image)
         cv2.waitKey(1)
         return cx,cy
-    def get_actuation(self, car, next_point, yaw):
-        c = Controller("Pure Pursuit", "PID")
+    def get_actuation(self, car, next_point, yaw, max_curvature, speed, prev_speed):
+        c = Controller("Pure Pursuit", "PD")
         
         if next_point is not None and next_point.shape == (2,) and car[0]!=-1 and car[1]!=-1:
             steering_angle = c.getSteeringAngle(car, next_point, yaw)
-            throttle, brake = c.getThrottleBrake(car, next_point, yaw) 
+            throttle, brake, prev_speed = c.getThrottleBrake(car, next_point, yaw, max_curvature, speed, prev_speed) 
         else:
             steering_angle = 0
             throttle = 0
             brake = 0
-        return steering_angle, throttle, brake
+        return steering_angle, throttle, brake, prev_speed
     def random_play(self, steps=1000):
         self.reset_env()
         #time.sleep(3)
+        prev_speed = 0
         for _ in range(steps):
-            car, next_point, yaw = self.extract_features()
-            steering, throttle, brake = self.get_actuation(car, next_point, yaw)
+            car, next_point, yaw, max_curvature, speed = self.extract_features()
+            steering, throttle, brake, prev_speed= self.get_actuation(car, next_point, yaw, max_curvature, speed, prev_speed)
             action = np.array([steering, throttle, brake])
             self.step(action)
         self.close()
@@ -133,4 +170,4 @@ class CarRacer:
 
 if __name__=="__main__":
     agent = CarRacer()
-    agent.random_play(steps=50000)
+    agent.random_play(steps=5000000)
