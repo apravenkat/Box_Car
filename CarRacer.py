@@ -37,6 +37,7 @@ class CarRacer:
         cx, cy = self.getCarLocation(image)
         car = []
         closest_point = np.array([])
+        next_point = np.array([])
         car = np.array([cx,cy])
         raw_env = self.env.unwrapped
         linear_velocity = raw_env.car.hull.linearVelocity
@@ -80,7 +81,8 @@ class CarRacer:
                 distances = np.linalg.norm(centerline - car, axis=1) + look_ahead
                 ld = 1.5*speed
                 closest = np.argmin(np.abs(distances-ld))
-                closest_point = np.array(centerline[closest])
+                next_point = np.array(centerline[closest])
+                closest_point = centerline[np.argmin(np.linalg.norm(centerline - car, axis=1))]
                 contour_img = image.copy()
                 for i in range(1, len(centerline)):
                     pt1 = (int(centerline[i-1][0]), int(centerline[i-1][1]))
@@ -91,7 +93,7 @@ class CarRacer:
                 contour_img = cv2.resize(contour_img, (96*3, 96*3))
                 cv2.imshow("Next Point ", contour_img)
                 cv2.waitKey(1)
-        return car, closest_point, angle, avg_angles, linear_velocity
+        return car, closest_point, next_point, angle, avg_angles, linear_velocity
     def findCurvature(self, points):
         if len(points) < 3:
             return 0.0
@@ -147,12 +149,9 @@ class CarRacer:
         cv2.imshow("Location of Car", image)
         cv2.waitKey(1)
         return cx,cy
-    def get_actuation(self, car, next_point, heading, max_curvature, speed):
-        lateral_controller = ['Stanley', 'PurePursuit']
-        longitudinal_controller = ['PID', 'New'] 
-        c = Controller(steering=lateral_controller[1], throttle=longitudinal_controller[0])
+    def get_actuation(self, c, car, closest_point, next_point, heading, max_curvature, speed):
         if next_point is not None and next_point.shape == (2,) and car[0]!=-1 and car[1]!=-1:
-            steering_angle = c.getSteeringAngle(car, next_point, heading, speed)
+            steering_angle = c.getSteeringAngle(car, closest_point, next_point, heading, speed)
             throttle, brake = c.getThrottleBrake(car, next_point, heading, max_curvature, speed) 
         else:
             steering_angle = 0
@@ -161,10 +160,13 @@ class CarRacer:
         return steering_angle, throttle, brake
     def random_play(self, steps=1000):
         self.reset_env()
+        lateral_controller = ['Stanley', 'PurePursuit']
+        longitudinal_controller = ['PID', 'New'] 
+        c = Controller(steering=lateral_controller[0], throttle=longitudinal_controller[0])
         #time.sleep(3)
         for _ in range(steps):
-            car, next_point, heading, max_curvature, speed = self.extract_features()
-            steering, throttle, brake = self.get_actuation(car, next_point, heading, max_curvature, speed)
+            car, closest_point, next_point, heading, max_curvature, speed = self.extract_features()
+            steering, throttle, brake = self.get_actuation(c, car, closest_point, next_point, heading, max_curvature, speed)
             action = np.array([steering, throttle, brake])
             self.step(action)
         self.close()

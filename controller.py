@@ -15,28 +15,46 @@ class Controller:
         self.mass = 400
         self.prev_error = 0
         self.car_pos = [0,0]
-    def getSteeringAngle(self, car, next_point, heading, speed):
+        self.counter = 0
+    def getSteeringAngle(self, car, closest_point, next_point, heading, speed):
         
         c = np.cos(-heading)
         s = np.sin(-heading)
         v_body_x = c * speed[0] - s * speed[1]
         v_body_y = s * speed[0] + c * speed[1]
+        vel = np.sqrt(speed[0]**2 + speed[1]**2)
+        dx = next_point[0] - car[0]
+        dy = next_point[1] - car[1]
+        L = 2.5  # wheelbase length 
+        target_angle = np.arctan2(dy, dx) + np.pi/2
         heading = np.arctan2(v_body_y, v_body_x)  - np.pi/2 # Adjust heading to be perpendicular to velocity vector
+        max_steering_angle = 0.4
         if self.steering == 'PurePursuit':
-            vel = np.sqrt(speed[0]**2 + speed[1]**2)
-            dx = next_point[0] - car[0]
-            dy = next_point[1] - car[1]
             ld = 20  # look-ahead distance
-            L = 2.5  # wheelbase length  
-            target_angle = np.arctan2(dy, dx) + np.pi/2
             alpha = target_angle - heading
             alpha = np.arctan2(np.sin(alpha), np.cos(alpha))  # normalize [-pi, pi]
             delta = np.arctan2(2*L*np.sin(alpha), ld) 
-            max_steering_angle = 0.4  # radians
+            
             steering_action = np.clip(delta / max_steering_angle, -1.0, 1.0)
             
         elif self.steering == 'Stanley':
-            steering_action = 0
+            heading_error = target_angle - heading
+            heading_error = np.arctan2(np.sin(heading_error), np.cos(heading_error))  # normalize [-pi, pi]
+            xf = car[0] + L * np.cos(heading) * 0.5
+            yf = car[1] + L * np.sin(heading) * 0.5
+            path_vec = next_point - closest_point
+            front_vec = np.array([xf, yf]) - closest_point
+            cte = np.cross(path_vec, front_vec) / (np.linalg.norm(path_vec)+0.1)
+            vel = max(vel, 0.1)
+            delta = 0.3*heading_error + np.arctan2(0.1* cte, vel)
+            delta = np.arctan2(np.sin(delta), np.cos(delta))
+            if self.counter == 0:
+                steering_action = 0
+                self.counter = 1    
+            else:
+                print(delta)
+                steering_action = np.clip(delta / max_steering_angle, -1.0, 1.0)
+                
         self.car_pos = car
         return steering_action  
     def getThrottleBrake(self, car, next_point, yaw, max_curvature, speed):
