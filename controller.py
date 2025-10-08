@@ -16,21 +16,25 @@ class Controller:
         self.prev_error = 0
         self.car_pos = [0,0]
         self.counter = 0
-    def getSteeringAngle(self, car, closest_point, next_point, heading, speed):
+    def getSteeringAngle(self, car, closest_point, heading, speed, centerline):
         
         c = np.cos(-heading)
         s = np.sin(-heading)
         v_body_x = c * speed[0] - s * speed[1]
         v_body_y = s * speed[0] + c * speed[1]
         vel = np.sqrt(speed[0]**2 + speed[1]**2)
+        ld = 1*vel  # look-ahead distance
+        distances = np.linalg.norm(centerline - car, axis=1)
+        closest = np.argmin(np.abs(distances-ld))
+        next_point = np.array(centerline[closest])
         dx = next_point[0] - car[0]
         dy = next_point[1] - car[1]
         L = 2.5  # wheelbase length 
         target_angle = np.arctan2(dy, dx) + np.pi/2
         heading = np.arctan2(v_body_y, v_body_x)  - np.pi/2 # Adjust heading to be perpendicular to velocity vector
         max_steering_angle = 0.4
+
         if self.steering == 'PurePursuit':
-            ld = 20  # look-ahead distance
             alpha = target_angle - heading
             alpha = np.arctan2(np.sin(alpha), np.cos(alpha))  # normalize [-pi, pi]
             delta = np.arctan2(2*L*np.sin(alpha), ld) 
@@ -52,21 +56,27 @@ class Controller:
                 steering_action = 0
                 self.counter = 1    
             else:
-                print(delta)
+
                 steering_action = np.clip(delta / max_steering_angle, -1.0, 1.0)
                 
         self.car_pos = car
         return steering_action  
-    def getThrottleBrake(self, car, next_point, yaw, max_curvature, speed):
+    def getThrottleBrake(self, car, heading, centerline, speed):
         brake = 0
         throttle = 0
+        c = np.cos(-heading)
+        s = np.sin(-heading)
+        v_body_x = c * speed[0] - s * speed[1]
+        v_body_y = s * speed[0] + c * speed[1]
+        acceleration = (speed - self.prev_speed) / self.dt
+        acc_x = acceleration[0]*c - acceleration[1]*s
+        acc_y = acceleration[0]*s + acceleration[1]*c
         vel = np.sqrt(speed[0]**2 + speed[1]**2)
-        vel_prev = (np.sqrt(self.prev_speed[0]**2 + self.prev_speed[1]**2))
         if self.throttle == 'PID':
             kp = 0.05
             kd = 0.00001  
             ki = 0.0001
-            target_speed = 50
+            target_speed = 35
             err = target_speed - vel
             self.errors += err * self.dt
             actuation = kp * (target_speed - vel) + kd * (err - self.prev_error)/self.dt  + ki * self.errors
@@ -78,11 +88,8 @@ class Controller:
                 throttle = 0
                 brake = np.clip(actuation, 0, 1) 
         
-        if self.throttle == 'New': 
-            acceleration_x = (np.abs(speed[0]) -np.abs(self.prev_speed[0])) / self.dt
-            acceleration_y = (np.abs(speed[1]) - np.abs(self.prev_speed[1])) / self.dt
-            
-        
+        if self.throttle == 'MPC': 
+            return 0
         self.prev_speed = speed
 
         return throttle, brake
